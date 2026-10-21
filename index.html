@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SPACE RUNNER</title>
+<style>
+:root{color-scheme:dark;--blue:#62d9ff;--ice:#b8f4ff;--navy:#07132b;--panel:#0e1d3a;--line:#28456f;--gold:#ffe28a}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:16px;background:radial-gradient(ellipse at 50% -10%,#203f7b 0%,#0a1631 42%,#030713 100%);color:#f2f8ff;font:16px system-ui,-apple-system,Segoe UI,sans-serif;display:flex;justify-content:center}
+.wrap{width:min(920px,100%)}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.logo{font-size:clamp(1.35rem,4.5vw,2.2rem);font-weight:950;letter-spacing:.13em}.logo span{color:var(--blue)}
+.sub{color:#a8c7ee;font-size:.9rem}
+.hud{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:9px}
+.stat{background:#0c1a34dd;border:1px solid var(--line);border-radius:12px;padding:9px 12px}.stat small{display:block;color:#91b2dd;text-transform:uppercase;letter-spacing:.1em;font-size:.68rem}.stat strong{font-size:1.12rem}
+.track{height:6px;background:#182b4b;border-radius:30px;overflow:hidden;margin-bottom:12px}.track div{height:100%;width:0;background:linear-gradient(90deg,#4baeff,#a6f4ff);transition:width .2s}
+.arena{position:relative;border:1px solid #35598b;border-radius:16px;overflow:hidden;box-shadow:0 18px 55px #0009;background:#030817}
+canvas{display:block;width:100%;height:auto;aspect-ratio:16/10;touch-action:none}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:#030918c9;backdrop-filter:blur(5px)}.overlay.hide{display:none}
+.modal{width:min(450px,100%);text-align:center;padding:24px;background:linear-gradient(145deg,#12294d,#08152d);border:1px solid #4774aa;border-radius:18px;box-shadow:0 15px 50px #0009}
+.modal h1{margin:0;font-size:clamp(1.5rem,5vw,2.3rem);line-height:1.1}.modal p{color:#c4dcfa;line-height:1.55;margin:12px 0 18px}
+button{border:0;border-radius:10px;padding:12px 16px;background:linear-gradient(90deg,#62d9ff,#b8f4ff);color:#06152b;font-weight:900;cursor:pointer}
+button.secondary{background:#14284a;color:#e8f5ff;border:1px solid #35598b}
+button:hover{filter:brightness(1.08)}.controls{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;color:#a9c6e8;font-size:.9rem}
+.mobile{display:none;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(2,45px);gap:5px}.mobile button{padding:6px;font-size:1.15rem}.mobile .up{grid-column:2}.mobile .left{grid-column:1;grid-row:2}.mobile .down{grid-column:2;grid-row:2}.mobile .right{grid-column:3;grid-row:2}
+.tip{text-align:center;color:#7398c6;font-size:.8rem;margin-top:10px}
+@media(max-width:620px){body{padding:10px 8px}.hud{grid-template-columns:repeat(2,minmax(0,1fr))}.mobile{display:grid}.controls{justify-content:center}.stat{padding:8px 10px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+<header><div><div class="logo">BLUE <span>SPACE RUNNER</span></div><div class="sub">Fly in every direction. Collect starlight. Make it home.</div></div><button class="secondary" id="soundBtn">Sound: Off</button></header>
+<section class="hud">
+<div class="stat"><small>Stage</small><strong id="stageLabel">1 / 10</strong></div>
+<div class="stat"><small>Stage score</small><strong id="scoreLabel">0</strong></div>
+<div class="stat"><small>Hull</small><strong id="livesLabel">♥ ♥ ♥</strong></div>
+<div class="stat"><small>Target</small><strong id="goalLabel">10 stars</strong></div>
+</section>
+<div class="track"><div id="progress"></div></div>
+<div class="arena">
+<canvas id="game" width="800" height="500" aria-label="Space game"></canvas>
+<div class="overlay" id="overlay"><div class="modal"><h1 id="modalTitle">READY FOR LIFTOFF?</h1><p id="modalText">Pilot your blue spaceship up, down, left, and right. Collect glowing blue stars and dodge asteroids. Each stage gets tougher, but you've got this.</p><button id="mainBtn">LAUNCH</button></div></div>
+</div>
+<div class="controls">
+<span>Move: <b>W A S D</b> or <b>arrow keys</b> · Pause: <b>P</b></span>
+<div class="mobile">
+<button class="secondary up" id="upBtn">↑</button><button class="secondary left" id="leftBtn">←</button><button class="secondary down" id="downBtn">↓</button><button class="secondary right" id="rightBtn">→</button>
+</div>
+<button class="secondary" id="restartBtn">Restart</button>
+</div>
+<div class="tip">Blue stars = points · Red asteroids = danger · Your score resets at every new stage.</div>
+</main>
+<script>
+(()=>{
+const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height;
+let state='ready',stage=1,score=0,lives=3,last=0,rockTimer=0,starTimer=0,rocks=[],stars=[],particles=[],keys={},held={left:false,right:false,up:false,down:false},soundOn=false,audio=null;
+const ship={x:W/2,y:H-85,speed:300,invuln:0};
+const backdrop=Array.from({length:145},()=>({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.7+.25,alpha:.2+Math.random()*.7,depth:.3+Math.random()*1.7}));
+const goals=s=>8+s*2,fallSpeed=s=>95+s*20,spawnRate=s=>Math.max(.25,.95-s*.06);
+function updateHud(){$('stageLabel').textContent=stage+' / 10';$('scoreLabel').textContent=score;$('livesLabel').textContent='♥ '.repeat(lives).trim()||'—';$('goalLabel').textContent=goals(stage)+' stars';$('progress').style.width=((stage-1)/10*100)+'%'}
+function beep(freq=520,dur=.08){if(!soundOn)return;try{audio ||=new(window.AudioContext||window.webkitAudioContext)();const o=audio.createOscillator(),g=audio.createGain();o.frequency.value=freq;g.gain.value=.035;o.connect(g);g.connect(audio.destination);o.start();g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+dur);o.stop(audio.currentTime+dur)}catch(e){}}
+function showModal(title,msg,button){$('modalTitle').textContent=title;$('modalText').textContent=msg;$('mainBtn').textContent=button;$('overlay').classList.remove('hide')}
+function hideModal(){$('overlay').classList.add('hide')}
+function resetStage(){ship.x=W/2;ship.y=H-85;ship.invuln=1.3;rocks=[];stars=[];particles=[];rockTimer=.4;starTimer=.35;score=0;updateHud()}
+function launch(){stage=1;lives=3;resetStage();state='playing';hideModal();last=performance.now();requestAnimationFrame(loop)}
+const encouragement=[
+"Great flying! You trusted your instincts and made it through. Ready for the next orbit?",
+"Look at you go, pilot! Every move is getting sharper. Keep that momentum.",
+"Another sector cleared! Take a breath, steady your course, and keep shining.",
+"Fantastic navigation! You're proving that persistence can outfly any obstacle.",
+"Halfway there! You've already come so far. Believe in your skills and keep going.",
+"Beautiful flying! Even the rough patches couldn't throw you off course.",
+"You're doing amazing, pilot. Stay calm, look ahead, and trust yourself.",
+"One more sector conquered! Your courage is brighter than the stars around you.",
+"Almost at the finish line! You've handled every challenge so far. You've got this.",
+"You did it! Ten stages cleared. Keep reaching for the stars—this is only the beginning."
+];
+function advanceStage(){
+  if(stage>=10){state='won';$('progress').style.width='100%';showModal('MISSION COMPLETE!','You cleared all 10 stages! Final stage score: '+score+'. '+encouragement[9],'FLY AGAIN');beep(880,.18);setTimeout(()=>beep(1120,.2),150);return}
+  const completed=stage;stage++;resetStage();state='stage';
+  showModal('STAGE '+completed+' CLEARED!',encouragement[completed-1]+' Next up: stage '+stage+'.','NEXT STAGE');
+}
+function burst(x,y,color,n=12){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=35+Math.random()*180;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.35+Math.random()*.5,color})}}
+function spawnRock(){const r=14+Math.random()*15+stage*.6;rocks.push({x:20+Math.random()*(W-40),y:-r,r,vx:(Math.random()-.5)*(25+stage*7),vy:fallSpeed(stage)*(.65+Math.random()*.65),rot:Math.random()*6,spin:(Math.random()-.5)*3})}
+function spawnStar(){stars.push({x:22+Math.random()*(W-44),y:-12,r:8,vy:fallSpeed(stage)*.52,spin:Math.random()*6})}
+function hit(){if(ship.invuln>0)return;lives--;ship.invuln=1.5;burst(ship.x,ship.y,'#ff667f',18);beep(130,.2);if(lives<=0){state='over';showModal('SHIP DAMAGED','You reached stage '+stage+'. Every attempt teaches you something—refuel and try again!','RETRY MISSION')}updateHud()}
+function update(dt){
+ if(state!=='playing')return;
+ ship.invuln=Math.max(0,ship.invuln-dt);
+ if(keys.ArrowLeft||keys.a||keys.A||held.left)ship.x-=ship.speed*dt;
+ if(keys.ArrowRight||keys.d||keys.D||held.right)ship.x+=ship.speed*dt;
+ if(keys.ArrowUp||keys.w||keys.W||held.up)ship.y-=ship.speed*dt;
+ if(keys.ArrowDown||keys.s||keys.S||held.down)ship.y+=ship.speed*dt;
+ ship.x=Math.max(20,Math.min(W-20,ship.x));ship.y=Math.max(28,Math.min(H-25,ship.y));
+ rockTimer-=dt;if(rockTimer<=0){spawnRock();rockTimer=spawnRate(stage)*(.7+Math.random()*.6)}
+ starTimer-=dt;if(starTimer<=0){spawnStar();starTimer=.75+Math.random()*.6}
+ rocks.forEach(r=>{r.x+=r.vx*dt;r.y+=r.vy*dt;r.rot+=r.spin*dt;if(r.x<r.r||r.x>W-r.r)r.vx*=-1});
+ stars.forEach(s=>{s.y+=s.vy*dt;s.spin+=dt*3});
+ rocks=rocks.filter(r=>r.y<H+r.r);stars=stars.filter(s=>s.y<H+15);
+ for(let i=rocks.length-1;i>=0;i--){const r=rocks[i];if(Math.hypot(r.x-ship.x,r.y-ship.y)<r.r+13){rocks.splice(i,1);hit();break}}
+ for(let i=stars.length-1;i>=0;i--){const s=stars[i];if(Math.hypot(s.x-ship.x,s.y-ship.y)<s.r+15){stars.splice(i,1);score++;burst(s.x,s.y,'#62d9ff',8);beep(620+Math.random()*260,.06);updateHud();if(score>=goals(stage)){advanceStage();return}}}
+ particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt});particles=particles.filter(p=>p.life>0);
+ backdrop.forEach(s=>{s.y+=35*s.depth*dt;if(s.y>H){s.y=0;s.x=Math.random()*W}});
+}
+function drawShip(){
+ ctx.save();ctx.translate(ship.x,ship.y);ctx.shadowBlur=22;ctx.shadowColor='#62d9ff';
+ ctx.fillStyle='#62d9ff';ctx.beginPath();ctx.moveTo(0,-22);ctx.lineTo(15,15);ctx.lineTo(5,10);ctx.lineTo(0,14);ctx.lineTo(-5,10);ctx.lineTo(-15,15);ctx.closePath();ctx.fill();
+ ctx.shadowBlur=0;ctx.fillStyle='#eafcff';ctx.beginPath();ctx.ellipse(0,-4,4,8,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#a58bff';ctx.beginPath();ctx.moveTo(-5,15);ctx.lineTo(0,26+Math.random()*5);ctx.lineTo(5,15);ctx.fill();
+ ctx.strokeStyle='#c5faff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-11,9);ctx.lineTo(-17,17);ctx.moveTo(11,9);ctx.lineTo(17,17);ctx.stroke();ctx.restore();
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);const bg=ctx.createLinearGradient(0,0,0,H);bg.addColorStop(0,'#0a1d42');bg.addColorStop(.55,'#06142d');bg.addColorStop(1,'#020712');ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+ backdrop.forEach(s=>{ctx.globalAlpha=s.alpha;ctx.fillStyle=s.depth>1.4?'#b7f4ff':'#d9e8ff';ctx.fillRect(s.x,s.y,s.r,s.r*s.depth)});ctx.globalAlpha=1;
+ ctx.strokeStyle='#142c50';ctx.lineWidth=1;for(let x=0;x<W;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+ stars.forEach(s=>{ctx.save();ctx.translate(s.x,s.y);ctx.rotate(s.spin);ctx.shadowBlur=15;ctx.shadowColor='#62d9ff';ctx.fillStyle='#8cecff';ctx.beginPath();ctx.moveTo(0,-s.r);ctx.lineTo(s.r*.35,-s.r*.35);ctx.lineTo(s.r,0);ctx.lineTo(s.r*.35,s.r*.35);ctx.lineTo(0,s.r);ctx.lineTo(-s.r*.35,s.r*.35);ctx.lineTo(-s.r,0);ctx.lineTo(-s.r*.35,-s.r*.35);ctx.closePath();ctx.fill();ctx.restore()});
+ rocks.forEach(r=>{ctx.save();ctx.translate(r.x,r.y);ctx.rotate(r.rot);ctx.shadowBlur=12;ctx.shadowColor='#8b9fca';ctx.fillStyle='#7e8ba7';ctx.strokeStyle='#c1d1ec';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<8;i++){const a=i*Math.PI/4,rr=r.r*(i%2?.78:1);if(i===0)ctx.moveTo(Math.cos(a)*rr,Math.sin(a)*rr);else ctx.lineTo(Math.cos(a)*rr,Math.sin(a)*rr)}ctx.closePath();ctx.fill();ctx.stroke();ctx.restore()});
+ particles.forEach(p=>{ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,3,3)});ctx.globalAlpha=1;
+ if(ship.invuln<=0||Math.floor(performance.now()/100)%2===0)drawShip();
+ ctx.fillStyle='#c8e8ff';ctx.font='bold 13px system-ui';ctx.fillText('SECTOR '+stage,16,23);ctx.fillStyle='#7fa9dc';ctx.font='12px system-ui';ctx.fillText('COLLECT '+goals(stage)+' STARS',16,41);
+}
+function loop(now){if(state!=='playing'){draw();return}const dt=Math.min((now-last)/1000,.035);last=now;update(dt);draw();if(state==='playing')requestAnimationFrame(loop)}
+$('mainBtn').addEventListener('click',()=>{if(['ready','over','won'].includes(state)){launch();return}if(state==='stage'||state==='paused'){state='playing';hideModal();last=performance.now();requestAnimationFrame(loop)}});
+$('restartBtn').addEventListener('click',()=>{state='ready';showModal('READY FOR LIFTOFF?','Start over from stage 1. Your score resets at every stage, so focus on the next target.','LAUNCH')});
+$('soundBtn').addEventListener('click',()=>{soundOn=!soundOn;$('soundBtn').textContent='Sound: '+(soundOn?'On':'Off');beep(520)});
+document.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key))e.preventDefault();keys[e.key]=true;if((e.key==='p'||e.key==='P')&&state==='playing'){state='paused';showModal('PAUSED','Take a breath, pilot. Your journey will be right here when you return.','RESUME')}});
+document.addEventListener('keyup',e=>keys[e.key]=false);
+[['leftBtn','left'],['rightBtn','right'],['upBtn','up'],['downBtn','down']].forEach(([id,dir])=>{const el=$(id),down=e=>{e.preventDefault();held[dir]=true},up=e=>{e.preventDefault();held[dir]=false};el.addEventListener('pointerdown',down);['pointerup','pointerleave','pointercancel'].forEach(evt=>el.addEventListener(evt,up))});
+canvas.addEventListener('pointerdown',e=>{if(innerWidth<620){const r=canvas.getBoundingClientRect();ship.x=(e.clientX-r.left)/r.width*W;ship.y=(e.clientY-r.top)/r.height*H}});
+updateHud();draw();
+})();
+</script>
+</body></html>
